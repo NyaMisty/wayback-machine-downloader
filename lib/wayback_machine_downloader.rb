@@ -207,9 +207,13 @@ class WaybackMachineDownloader
     @threads_count = 1 unless @threads_count != 0
     @threads_count.times do
       threads << Thread.new do
+        uri = URI('http://web.archive.org:80')
+        http = Net::HTTP.new(uri.host, uri.port)
+        http.keep_alive_timeout = 60
+        http.start
         until file_queue.empty?
           file_remote_info = file_queue.pop(true) rescue nil
-          download_file(file_remote_info) if file_remote_info
+          download_file(http, file_remote_info) if file_remote_info
         end
       end
     end
@@ -243,7 +247,7 @@ class WaybackMachineDownloader
     end
   end
 
-  def download_file file_remote_info
+  def download_file http, file_remote_info
     current_encoding = "".encoding
     file_url = file_remote_info[:file_url].encode(current_encoding)
     file_id = file_remote_info[:file_id]
@@ -268,8 +272,20 @@ class WaybackMachineDownloader
         structure_dir_path dir_path
         open(file_path, "wb") do |file|
           begin
-            URI("https://web.archive.org/web/#{file_timestamp}id_/#{file_url}").open("Accept-Encoding" => "plain") do |uri|
-              file.write(uri.read)
+            #URI("https://web.archive.org/web/#{file_timestamp}id_/#{file_url}").open("Accept-Encoding" => "plain") do |uri|
+            #  file.write(uri.read)
+            #end
+            uri = URI("http://web.archive.org:80/web/#{file_timestamp}id_/#{file_url}")
+            req = Net::HTTP::Get.new(uri.request_uri)
+            req['Accept-Encoding'] = 'plain'
+            http.request(req) do |response|
+              if response.is_a?(Net::HTTPSuccess)
+                response.read_body do |chunk|
+                  file.write(chunk)
+                end
+              else
+                raise OpenURI::HTTPError.new("#{response.code} #{response.message}", response)
+              end
             end
           rescue OpenURI::HTTPError => e
             puts "#{file_url} # #{e}"
